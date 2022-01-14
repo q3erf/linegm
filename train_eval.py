@@ -103,9 +103,13 @@ def train_eval_model(model, criterion, optimizer, dataloader, num_epochs, resume
             data_list = [_.cuda() for _ in inputs["images"]]
             points_gt_list = [_.cuda() for _ in inputs["Ps"]]
             n_points_gt_list = [_.cuda() for _ in inputs["ns"]]
-            edges_list = [_.to("cuda") for _ in inputs["edges"]]
+            # edges_list = [_.to("cuda") for _ in inputs["graphs"]]
+            line_graphs_list = [_.to("cuda") for _ in inputs["linegraphs"]]
             perm_mat_list = [perm_mat.cuda() for perm_mat in inputs["gt_perm_mat"]]
+            print(line_graphs_list)
+            print(perm_mat_list)
 
+            break
             iter_num = iter_num + 1
 
             # zero the parameter gradients
@@ -113,7 +117,7 @@ def train_eval_model(model, criterion, optimizer, dataloader, num_epochs, resume
 
             with torch.set_grad_enabled(True):
                 # forward
-                s_pred_list = model(data_list, points_gt_list, edges_list, n_points_gt_list, perm_mat_list)
+                s_pred_list = model(data_list, points_gt_list, line_graphs_list, n_points_gt_list, perm_mat_list)
 
                 loss = sum([criterion(s_pred, perm_mat) for s_pred, perm_mat in zip(s_pred_list, perm_mat_list)])
                 loss /= len(s_pred_list)
@@ -151,6 +155,7 @@ def train_eval_model(model, criterion, optimizer, dataloader, num_epochs, resume
                     running_loss = 0.0
                     running_since = time.time()
 
+        break
         epoch_loss = epoch_loss / dataset_size
         epoch_acc = epoch_acc / dataset_size
         epoch_f1 = epoch_f1 / dataset_size
@@ -168,6 +173,7 @@ def train_eval_model(model, criterion, optimizer, dataloader, num_epochs, resume
             )
         )
         print()
+
 
         # Eval in each epoch
         accs, f1_scores = eval_model(model, dataloader["test"])
@@ -190,7 +196,7 @@ def train_eval_model(model, criterion, optimizer, dataloader, num_epochs, resume
             time_elapsed // 3600, (time_elapsed // 60) % 60, time_elapsed % 60
         )
     )
-
+    acc_dict = None
     return model, acc_dict
 
 
@@ -238,7 +244,7 @@ if __name__ == "__main__":
 
     num_epochs, _, __ = lr_schedules[cfg.TRAIN.lr_schedule]
     with DupStdoutFileManager(str(Path(cfg.model_dir) / ("train_log.log"))) as _:
-        model, accs = train_eval_model(
+        _, _ = train_eval_model(
             model,
             criterion,
             optimizer,

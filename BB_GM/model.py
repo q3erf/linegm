@@ -1,14 +1,11 @@
+from networkx.algorithms import matching
 import torch
-
 import utils.backbone
 from BB_GM.affinity_layer import InnerProductWithWeightsAffinity
 from BB_GM.sconv_archs import SiameseSConvOnNodes, SiameseNodeFeaturesToEdgeFeatures
-from lpmp_py import GraphMatchingModule
-from lpmp_py import MultiGraphMatchingModule
 from utils.config import cfg
 from utils.feature_align import feature_align
 from utils.utils import lexico_iter
-from utils.visualization import easy_visualize
 
 
 def normalize_over_channels(x):
@@ -97,43 +94,6 @@ class Net(utils.backbone.VGG16_bn):
         # Aimilarities to costs
         quadratic_costs_list = [[-0.5 * x for x in quadratic_costs] for quadratic_costs in quadratic_costs_list]
 
-        if cfg.BB_GM.solver_name == "lpmp":
-            all_edges = [[item.edge_index for item in graph] for graph in orig_graph_list]
-            gm_solvers = [
-                GraphMatchingModule(
-                    all_left_edges,
-                    all_right_edges,
-                    ns_src,
-                    ns_tgt,
-                    cfg.BB_GM.lambda_val,
-                    cfg.BB_GM.solver_params,
-                )
-                for (all_left_edges, all_right_edges), (ns_src, ns_tgt) in zip(
-                    lexico_iter(all_edges), lexico_iter(n_points)
-                )
-            ]
-            matchings = [
-                gm_solver(unary_costs, quadratic_costs)
-                for gm_solver, unary_costs, quadratic_costs in zip(gm_solvers, unary_costs_list, quadratic_costs_list)
-            ]
-        elif cfg.BB_GM.solver_name == "multigraph":
-            all_edges = [[item.edge_index for item in graph] for graph in orig_graph_list]
-            gm_solver = MultiGraphMatchingModule(
-                all_edges, n_points, cfg.BB_GM.lambda_val, cfg.BB_GM.solver_params)
-            matchings = gm_solver(unary_costs_list, quadratic_costs_list)
-        else:
-            raise ValueError(f"Unknown solver {cfg.BB_GM.solver_name}")
-
-        if visualize_flag:
-            easy_visualize(
-                orig_graph_list,
-                points,
-                n_points,
-                images,
-                unary_costs_list,
-                quadratic_costs_list,
-                matchings,
-                **visualization_params,
-            )
-
+        matchings = None
+        
         return matchings

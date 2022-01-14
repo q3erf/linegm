@@ -8,7 +8,7 @@ from data.pascal_voc import PascalVOC
 from data.willow_obj import WillowObject
 from data.SPair71k import SPair71k
 from utils.build_graphs import build_graphs
-
+from torch_geometric.transforms import LineGraph
 from utils.config import cfg
 from torch_geometric.data import Data, Batch
 
@@ -67,8 +67,9 @@ class GMDataset(Dataset):
 
         points_gt = [np.array([(kp["x"], kp["y"]) for kp in anno_dict["keypoints"]]) for anno_dict in anno_list]
         n_points_gt = [len(p_gt) for p_gt in points_gt]
-
+        lg = LineGraph()
         graph_list = []
+        line_graph_list = []
         for p_gt, n_p_gt in zip(points_gt, n_points_gt):
             edge_indices, edge_features = build_graphs(p_gt, n_p_gt)
 
@@ -83,12 +84,17 @@ class GMDataset(Dataset):
             )
             graph.num_nodes = n_p_gt
             graph_list.append(graph)
+            linegraph = lg(graph)
+            linegraph['pos'] = None
+            line_graph_list.append(linegraph)
 
+        lg_gt_perm_mat = []
         ret_dict = {
             "Ps": [torch.Tensor(x) for x in points_gt],
             "ns": [torch.tensor(x) for x in n_points_gt],
             "gt_perm_mat": perm_mat_list,
-            "edges": graph_list,
+            "graphs": graph_list,
+            "linegraphs": line_graph_list,
         }
 
         imgs = [anno["image"] for anno in anno_list]
