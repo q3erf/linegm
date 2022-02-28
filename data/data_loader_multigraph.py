@@ -69,8 +69,10 @@ class GMDataset(Dataset):
 
         points_gt = [np.array([(kp["x"], kp["y"]) for kp in anno_dict["keypoints"]]) for anno_dict in anno_list]
         n_points_gt = [len(p_gt) for p_gt in points_gt]
-        # print(' n_points_gt :', n_points_gt)
-        lg = LineGraph()
+        line_n_points_gt = []
+        
+        # lg = LineGraph()
+
         # graph list 中包含的是一个source graph和一个target line graph
         graph_list = []
 
@@ -92,11 +94,11 @@ class GMDataset(Dataset):
             graph.num_nodes = n_p_gt
             graph_list.append(graph)
             
-            linegraph = graph.clone()
-            
+            # linegraph = graph.clone()
             # linegraph = lg(linegraph)
-            linegraph = build_line_graph(linegraph, perm_mat_list[0])
-            
+
+            linegraph = build_line_graph(graph)
+            line_n_points_gt.append(linegraph.x.size(0))
             linegraph['pos'] = None
             line_graph_list.append(linegraph)
         
@@ -107,9 +109,9 @@ class GMDataset(Dataset):
         lg_gt_perm_mat = build_line_perm(line_graph_list[0].x_token, line_graph_list[1].x_token, perm_mat_list[0])
 
         ret_dict = {
-            "Ps": [torch.Tensor(x) for x in points_gt],
-            "ns": [torch.tensor(x) for x in n_points_gt],
-            "gt_perm_mat": perm_mat_list,
+            # "Ps": [torch.Tensor(x) for x in points_gt],
+            "line_ns": [torch.tensor(x) for x in n_points_gt],
+            # "gt_perm_mat": perm_mat_list,
             "graphs": graph_list,
             "line_graphs": line_graph_list,
             "line_perm": lg_gt_perm_mat,

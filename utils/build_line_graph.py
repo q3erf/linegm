@@ -6,7 +6,7 @@ import numpy as np
 from torch_sparse import coalesce
 
 
-def build_line_graph(data: Data, perm):
+def build_line_graph(data: Data)-> Data:
     N = data.num_nodes
     # print('graph nodes num: ', N)
     edge_index, edge_attr = data.edge_index, data.edge_attr
