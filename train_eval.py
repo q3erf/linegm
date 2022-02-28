@@ -103,12 +103,12 @@ def train_eval_model(model, criterion, optimizer, dataloader, num_epochs, resume
             data_list = [_.cuda() for _ in inputs["images"]]
             points_gt_list = [_.cuda() for _ in inputs["Ps"]]
             n_points_gt_list = [_.cuda() for _ in inputs["ns"]]
-            # edges_list = [_.to("cuda") for _ in inputs["graphs"]]
-            line_graphs_list = [_.to("cuda") for _ in inputs["linegraphs"]]
-            perm_mat_list = [perm_mat.cuda() for perm_mat in inputs["gt_perm_mat"]]
-            print(line_graphs_list)
-            print(perm_mat_list)
-
+            edges_list = [_.to("cuda") for _ in inputs["graphs"]]
+            line_graphs_list = [_.to("cuda") for _ in inputs["line_graphs"]]
+            perm_mat_list = [perm_mat.cuda() for perm_mat in inputs["line_perm"]]
+            print('edge list: ',edges_list)
+            print('line graph list: ',line_graphs_list)
+            print('perm mat list: ',perm_mat_list)
             break
             iter_num = iter_num + 1
 

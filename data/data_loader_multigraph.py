@@ -11,6 +11,7 @@ from utils.build_graphs import build_graphs
 from torch_geometric.transforms import LineGraph
 from utils.config import cfg
 from torch_geometric.data import Data, Batch
+from utils.build_line_graph import build_line_graph, build_line_perm
 
 datasets = {"PascalVOC": PascalVOC,
             "WillowObject": WillowObject,
@@ -56,6 +57,7 @@ class GMDataset(Dataset):
         idx = idx if self.true_epochs else None
         anno_list, perm_mat_list = self.ds.get_k_samples(idx, k=self.num_graphs_in_matching_instance, cls=self.cls, mode=sampling_strategy)
         for perm_mat in perm_mat_list:
+
             if (
                 not perm_mat.size
                 or (perm_mat.size < 2 * 2 and sampling_strategy == "intersection")
@@ -67,12 +69,17 @@ class GMDataset(Dataset):
 
         points_gt = [np.array([(kp["x"], kp["y"]) for kp in anno_dict["keypoints"]]) for anno_dict in anno_list]
         n_points_gt = [len(p_gt) for p_gt in points_gt]
+        # print(' n_points_gt :', n_points_gt)
         lg = LineGraph()
+        # graph list 中包含的是一个source graph和一个target line graph
         graph_list = []
-        line_graph_list = []
-        for p_gt, n_p_gt in zip(points_gt, n_points_gt):
-            edge_indices, edge_features = build_graphs(p_gt, n_p_gt)
 
+        # line graph list 中包含的是一个source line graph和一个target line graph
+        line_graph_list = []
+        A = []
+        for p_gt, n_p_gt in zip(points_gt, n_points_gt):
+            edge_indices, edge_features, tmpa = build_graphs(p_gt, n_p_gt)
+            A.append(tmpa)
             # Add dummy node features so the __slices__ of them is saved when creating a batch
             pos = torch.tensor(p_gt).to(torch.float32) / 256.0
             assert (pos > -1e-5).all(), p_gt
@@ -84,17 +91,28 @@ class GMDataset(Dataset):
             )
             graph.num_nodes = n_p_gt
             graph_list.append(graph)
-            linegraph = lg(graph)
+            
+            linegraph = graph.clone()
+            
+            # linegraph = lg(linegraph)
+            linegraph = build_line_graph(linegraph, perm_mat_list[0])
+            
             linegraph['pos'] = None
             line_graph_list.append(linegraph)
+        
+        # print('perm^T * source * perm: ', perm_mat_list[0].T.dot(A[0]).dot(perm_mat_list[0]))
+        # print('target: ', A[1])
+        # res = perm_mat_list[0].T.dot(A[0]).dot(perm_mat_list[0]) - A[1]
+        # print('differnce between: ', np.count_nonzero(res)/2)
+        lg_gt_perm_mat = build_line_perm(line_graph_list[0].x_token, line_graph_list[1].x_token, perm_mat_list[0])
 
-        lg_gt_perm_mat = []
         ret_dict = {
             "Ps": [torch.Tensor(x) for x in points_gt],
             "ns": [torch.tensor(x) for x in n_points_gt],
             "gt_perm_mat": perm_mat_list,
             "graphs": graph_list,
-            "linegraphs": line_graph_list,
+            "line_graphs": line_graph_list,
+            "line_perm": lg_gt_perm_mat,
         }
 
         imgs = [anno["image"] for anno in anno_list]
@@ -191,7 +209,7 @@ def get_dataloader(dataset, fix_seed=True, shuffle=False):
         dataset,
         batch_size=cfg.BATCH_SIZE,
         shuffle=shuffle,
-        num_workers=2,
+        num_workers=1,
         collate_fn=collate_fn,
         pin_memory=False,
         worker_init_fn=worker_init_fix if fix_seed else worker_init_rand,
