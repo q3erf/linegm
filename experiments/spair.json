@@ -12,7 +12,7 @@
     "difficulty_params": {
     }
   },
-  "visualize": true,
+  "visualize": false,
   "visualization_params": {
     "reduced_vis": true,
     "produce_pdf": false

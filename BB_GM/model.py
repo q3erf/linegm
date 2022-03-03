@@ -1,12 +1,13 @@
 from networkx.algorithms import matching
 import torch
+import torch.nn as nn
 import utils.backbone
 from BB_GM.affinity_layer import InnerProductWithWeightsAffinity
 from BB_GM.sconv_archs import SiameseSConvOnNodes, SiameseNodeFeaturesToEdgeFeatures
 from utils.config import cfg
 from utils.feature_align import feature_align
 from utils.utils import lexico_iter
-
+from torch_geometric.nn import GCNConv
 
 def normalize_over_channels(x):
     channel_norms = torch.norm(x, dim=1, keepdim=True)
@@ -18,82 +19,101 @@ def concat_features(embeddings, num_vertices):
     return res.transpose(0, 1)
 
 
+class Permuter(torch.nn.Module):
+    def __init__(self, node_hidden_dim):
+        super().__init__()
+        self.scoring_fc = nn.Linear(node_hidden_dim, 1)
+
+    def score(self, x, mask):
+        scores = self.scoring_fc(x)
+        fill_value = scores.min().item() - 1
+        scores = scores.masked_fill(mask.unsqueeze(-1) == 0, fill_value)
+        return scores
+
+    def soft_sort(self, scores, hard, tau):
+        scores_sorted = scores.sort(descending=True, dim=1)[0]
+        pairwise_diff = (scores.transpose(1, 2) - scores_sorted).abs().neg() / tau
+        perm = pairwise_diff.softmax(-1)
+        if hard:
+            perm_ = torch.zeros_like(perm, device=perm.device)
+            perm_.scatter_(-1, perm.topk(1, -1)[1], value=1)
+            perm = (perm_ - perm).detach() + perm
+        return perm
+
+    def mask_perm(self, perm, mask):
+        batch_size, num_nodes = mask.size(0), mask.size(1)
+        eye = torch.eye(num_nodes, num_nodes).unsqueeze(0).expand(batch_size, -1, -1).type_as(perm)
+        mask = mask.unsqueeze(-1).expand(-1, -1, num_nodes)
+        perm = torch.where(mask, perm, eye)
+        return perm
+
+    def forward(self, node_features, mask, hard=False, tau=1.0):
+        # add noise to break symmetry
+        node_features = node_features + torch.randn_like(node_features) * 0.05
+        scores = self.score(node_features, mask)
+        perm = self.soft_sort(scores, hard, tau)
+        perm = perm.transpose(2, 1)
+        perm = self.mask_perm(perm, mask)
+        return perm
+
+    @staticmethod
+    def permute_node_features(node_features, perm):
+        node_features = torch.matmul(perm, node_features)
+        return node_features
+
+    @staticmethod
+    def permute_edge_features(edge_features, perm):
+        edge_features = torch.matmul(perm.unsqueeze(1), edge_features)
+        edge_features = torch.matmul(perm.unsqueeze(1), edge_features.permute(0, 2, 1, 3))
+        edge_features = edge_features.permute(0, 2, 1, 3)
+        return edge_features
+
+    @staticmethod
+    def permute_graph(graph, perm):
+        graph.node_features = Permuter.permute_node_features(graph.node_features, perm)
+        graph.edge_features = Permuter.permute_edge_features(graph.edge_features, perm)
+        return graph
+
+
 class Net(utils.backbone.VGG16_bn):
     def __init__(self):
         super(Net, self).__init__()
-        self.message_pass_node_features = SiameseSConvOnNodes(input_node_dim=1024)
-        self.build_edge_features_from_node_features = SiameseNodeFeaturesToEdgeFeatures(
-            total_num_nodes=self.message_pass_node_features.num_node_features
-        )
-        self.global_state_dim = 1024
-        self.vertex_affinity = InnerProductWithWeightsAffinity(
-            self.global_state_dim, self.message_pass_node_features.num_node_features)
-        self.edge_affinity = InnerProductWithWeightsAffinity(
-            self.global_state_dim,
-            self.build_edge_features_from_node_features.num_edge_features)
+        self.hidden_dim = 64
+        self.mpnn = nn.Sequential(
+            GCNConv(in_channels=4, out_channels=32), 
+            nn.ReLU(),
+            GCNConv(in_channels=32, out_channels=self.hidden_dim),
+        ) 
+        self.permuter = Permuter(self.hidden_dim)
+
+
 
     def forward(
         self,
         images,
-        points,
         graphs,
         n_points,
         perm_mats,
+        mask,
         visualize_flag=False,
         visualization_params=None,
     ):
+        '''
+        1. 使用MPNN更新Gs 和 Gt
+        2. 从Gs中选择top-k个点构成集合Ps,从Gt中选择top-k个点构成集合Pt.
+            1.选拔机制怎么定义, nn.linear
+                
+        3. 对Ps和Pt进行匹配,反馈gradients
 
+        '''
         global_list = []
         orig_graph_list = []
-        for image, p, n_p, graph in zip(images, points, n_points, graphs):
-            # extract feature
-            nodes = self.node_layers(image)
-            edges = self.edge_layers(nodes)
+        node_feat = graphs[0].x
+        node_feat = self.mpnn(node_feat)
+        
+        perm = self.permuter(node_feat, mask, hard=True, tau=1.0)
 
-            global_list.append(self.final_layers(edges)[0].reshape((nodes.shape[0], -1)))
-            nodes = normalize_over_channels(nodes)
-            edges = normalize_over_channels(edges)
-
-            # arrange features
-            U = concat_features(feature_align(nodes, p, n_p, (256, 256)), n_p)
-            F = concat_features(feature_align(edges, p, n_p, (256, 256)), n_p)
-            node_features = torch.cat((U, F), dim=-1)
-            graph.x = node_features
-
-            graph = self.message_pass_node_features(graph)
-            orig_graph = self.build_edge_features_from_node_features(graph)
-            orig_graph_list.append(orig_graph)
-
-        global_weights_list = [
-            torch.cat([global_src, global_tgt], axis=-1) for global_src, global_tgt in lexico_iter(global_list)
-        ]
-        global_weights_list = [normalize_over_channels(g) for g in global_weights_list]
-
-        unary_costs_list = [
-            self.vertex_affinity([item.x for item in g_1], [item.x for item in g_2], global_weights)
-            for (g_1, g_2), global_weights in zip(lexico_iter(orig_graph_list), global_weights_list)
-        ]
-
-        # Similarities to costs
-        unary_costs_list = [[-x for x in unary_costs] for unary_costs in unary_costs_list]
-
-        if self.training:
-            unary_costs_list = [
-                [
-                    x + 1.0*gt[:dim_src, :dim_tgt]  # Add margin with alpha = 1.0
-                    for x, gt, dim_src, dim_tgt in zip(unary_costs, perm_mat, ns_src, ns_tgt)
-                ]
-                for unary_costs, perm_mat, (ns_src, ns_tgt) in zip(unary_costs_list, perm_mats, lexico_iter(n_points))
-            ]
-
-        quadratic_costs_list = [
-            self.edge_affinity([item.edge_attr for item in g_1], [item.edge_attr for item in g_2], global_weights)
-            for (g_1, g_2), global_weights in zip(lexico_iter(orig_graph_list), global_weights_list)
-        ]
-
-        # Aimilarities to costs
-        quadratic_costs_list = [[-0.5 * x for x in quadratic_costs] for quadratic_costs in quadratic_costs_list]
-
+        
         matchings = None
         
         return matchings

@@ -44,7 +44,7 @@ def build_line_graph(data: Data)-> Data:
     linegraph = Data(
         x = torch.FloatTensor(line_x),
         edge_index = torch.LongTensor(line_edge_index).t(),
-        x_token = edge_index.T,
+        x_token = edge_index,
     )
     linegraph.num_nodes = line_num_nodes
     # print(linegraph)
@@ -53,8 +53,6 @@ def build_line_graph(data: Data)-> Data:
 
 def build_line_perm(edge_index_g1, edge_index_g2, perm):
     line_correspond = []
-    edge_index_g1 = edge_index_g1.T
-    edge_index_g2 = edge_index_g2.T
 
     N1, N2 = edge_index_g1.size(0), edge_index_g2.size(0)
     # print('size: ', N1, N2)

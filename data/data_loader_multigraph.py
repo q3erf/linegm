@@ -98,25 +98,30 @@ class GMDataset(Dataset):
             # linegraph = lg(linegraph)
 
             linegraph = build_line_graph(graph)
-            line_n_points_gt.append(linegraph.x.size(0))
+            line_n_points_gt.append(linegraph.num_nodes)
             linegraph['pos'] = None
             line_graph_list.append(linegraph)
-        
+
         # print('perm^T * source * perm: ', perm_mat_list[0].T.dot(A[0]).dot(perm_mat_list[0]))
         # print('target: ', A[1])
         # res = perm_mat_list[0].T.dot(A[0]).dot(perm_mat_list[0]) - A[1]
         # print('differnce between: ', np.count_nonzero(res)/2)
         lg_gt_perm_mat = build_line_perm(line_graph_list[0].x_token, line_graph_list[1].x_token, perm_mat_list[0])
 
+        max_node = max(line_n_points_gt)
+        mask_s = [1]*line_n_points_gt[0] + [0]*(max_node-line_n_points_gt[0])
+        mask_t = [1]*line_n_points_gt[1] + [0]*(max_node-line_n_points_gt[1])
+        mask = torch.ByteTensor([mask_s, mask_t])
         ret_dict = {
             # "Ps": [torch.Tensor(x) for x in points_gt],
-            "line_ns": [torch.tensor(x) for x in n_points_gt],
+            "line_ns": [torch.tensor(x) for x in line_n_points_gt],
             # "gt_perm_mat": perm_mat_list,
+            "mask": mask,
             "graphs": graph_list,
             "line_graphs": line_graph_list,
             "line_perm": lg_gt_perm_mat,
         }
-
+        
         imgs = [anno["image"] for anno in anno_list]
         if imgs[0] is not None:
             trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize(cfg.NORM_MEANS, cfg.NORM_STD)])
