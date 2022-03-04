@@ -21,8 +21,8 @@ def build_line_graph(data: Data)-> Data:
         else:
             mask.append(True)
     edge_index = edge_index[mask]
+    
     line_num_nodes = edge_index.size(0)
-    # print('line graph nodes num: ', line_num_nodes)
     # print(edge_index)
 
     line_edge_index = []

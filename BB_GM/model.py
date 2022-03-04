@@ -1,6 +1,9 @@
 from networkx.algorithms import matching
 import torch
+import torch.nn.functional as F
 import torch.nn as nn
+import torch_geometric
+import torch_geometric.utils as ut
 import utils.backbone
 from BB_GM.affinity_layer import InnerProductWithWeightsAffinity
 from BB_GM.sconv_archs import SiameseSConvOnNodes, SiameseNodeFeaturesToEdgeFeatures
@@ -78,12 +81,9 @@ class Permuter(torch.nn.Module):
 class Net(utils.backbone.VGG16_bn):
     def __init__(self):
         super(Net, self).__init__()
-        self.hidden_dim = 64
-        self.mpnn = nn.Sequential(
-            GCNConv(in_channels=4, out_channels=32), 
-            nn.ReLU(),
-            GCNConv(in_channels=32, out_channels=self.hidden_dim),
-        ) 
+        self.hidden_dim = 8
+        self.mpnn = GCNConv(in_channels=4, out_channels=self.hidden_dim)
+          
         self.permuter = Permuter(self.hidden_dim)
 
 
@@ -108,12 +108,40 @@ class Net(utils.backbone.VGG16_bn):
         '''
         global_list = []
         orig_graph_list = []
-        node_feat = graphs[0].x
-        node_feat = self.mpnn(node_feat)
-        
-        perm = self.permuter(node_feat, mask, hard=True, tau=1.0)
+        topk_list = []
+        mask_list = []
+        for graph, n_point in zip(graphs, n_points):
+
+            node_feat = graph.x
+            edge_index = graph.edge_index
+            
+            node_feat = self.mpnn(node_feat, edge_index)
+            # node_feat = F.relu(node_feat)
+            
+            node_feat_dense, batch_mask = ut.to_dense_batch(node_feat, graph.batch)
+            mask_list.append(batch_mask)
+
+            mask = graph.mask
+            mask = ut.to_dense_batch(mask, graph.batch)[0]
+
+            perm = self.permuter(node_feat_dense, mask, hard=True, tau=1.0)
+            print('perm size: ', perm.size())
+            print('dense_node_feat size: ', node_feat_dense.size())
+
+            #  perm: b*n*n dense_node_feat: b*n*d 
+            new_node_feat = torch.bmm(perm, node_feat_dense)[:,:5,:]
+
+            topk_list.append(new_node_feat)
 
         
+        # 对topk_list中的source batch 和 target batch进行匹配
+        # source batch: b*n*d * mask
+        # print(topk_list[0].size(), topk_list[1].size())
+        
+        for sg,tg in zip(topk_list[0], topk_list[1]):
+            print(sg.size(), tg.size())
+            break
+
         matchings = None
         
         return matchings

@@ -100,6 +100,7 @@ class GMDataset(Dataset):
             linegraph = build_line_graph(graph)
             line_n_points_gt.append(linegraph.num_nodes)
             linegraph['pos'] = None
+            linegraph['mask'] = torch.ByteTensor([1]*linegraph.num_nodes)
             line_graph_list.append(linegraph)
 
         # print('perm^T * source * perm: ', perm_mat_list[0].T.dot(A[0]).dot(perm_mat_list[0]))

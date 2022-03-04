@@ -102,15 +102,16 @@ def train_eval_model(model, criterion, optimizer, dataloader, num_epochs, resume
         for inputs in dataloader["train"]:
             data_list = [_.cuda() for _ in inputs["images"]]
             # points_gt_list = [_.cuda() for _ in inputs["Ps"]]
-            n_points_gt_list = [_.cuda() for _ in inputs["line_ns"]]
+            line_n_points_gt_list = [_.cuda() for _ in inputs["line_ns"]]
             # edges_list = [_.to("cuda") for _ in inputs["graphs"]]
             mask = [_.cuda() for _ in inputs["mask"]]
+            mask = torch.stack(mask)
             line_graphs_list = [_.to("cuda") for _ in inputs["line_graphs"]]
             perm_mat_list = [perm_mat.cuda() for perm_mat in inputs["line_perm"]]
-            print('n_points_gt_list: ', n_points_gt_list)
+            print('line_n_points_gt_list: ', line_n_points_gt_list)
             # print('line graph list: ',line_graphs_list)
             # print('perm mat list: ',perm_mat_list)
-            print('mask: ', mask)
+            # print('mask size: ', mask.size())
             iter_num = iter_num + 1
 
             # zero the parameter gradients
@@ -118,7 +119,7 @@ def train_eval_model(model, criterion, optimizer, dataloader, num_epochs, resume
 
             with torch.set_grad_enabled(True):
                 # forward
-                s_pred_list = model(data_list, line_graphs_list, n_points_gt_list, perm_mat_list, mask)
+                s_pred_list = model(data_list, line_graphs_list, line_n_points_gt_list, perm_mat_list, mask)
 
                 loss = sum([criterion(s_pred, perm_mat) for s_pred, perm_mat in zip(s_pred_list, perm_mat_list)])
                 loss /= len(s_pred_list)
