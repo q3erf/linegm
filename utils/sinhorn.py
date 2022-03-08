@@ -337,16 +337,19 @@ if __name__ == '__main__':
                          [1., 0, 3.],
                          [2., 0, 1.],
                          [4., 0, 2.]]], requires_grad=True)
-    outp = bs(inp, (3, 4))
+    inp1 = torch.rand((4,6,6), requires_grad=True)
+    outp = bs(inp1)
+    # outp = bs(inp, (3, 4))
 
     print(outp)
-    l = torch.sum(outp)
-    l.backward()
-    print(inp.grad * 1e10)
+    
+    # l = torch.sum(outp)
+    # l.backward()
+    # print(inp.grad * 1e10)
 
-    outp2 = torch.tensor([[0.1, 0.1, 1],
-                          [2, 3, 4.]], requires_grad=True)
+    # outp2 = torch.tensor([[0.1, 0.1, 1],
+    #                       [2, 3, 4.]], requires_grad=True)
 
-    l = torch.sum(outp2)
-    l.backward()
-    print(outp2.grad)
+    # l = torch.sum(outp2)
+    # l.backward()
+    # print(outp2.grad) 

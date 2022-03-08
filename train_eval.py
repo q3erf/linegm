@@ -108,9 +108,12 @@ def train_eval_model(model, criterion, optimizer, dataloader, num_epochs, resume
             mask = torch.stack(mask)
             line_graphs_list = [_.to("cuda") for _ in inputs["line_graphs"]]
             perm_mat_list = [perm_mat.cuda() for perm_mat in inputs["line_perm"]]
-            print('line_n_points_gt_list: ', line_n_points_gt_list)
+            
+            # print('line_n_points_gt_list: ', line_n_points_gt_list)
             # print('line graph list: ',line_graphs_list)
-            # print('perm mat list: ',perm_mat_list)
+            
+            # gt_perm_list = [perm_mat[:line_n_points_gt_list[0][ind],:line_n_points_gt_list[1][ind]] for ind,perm_mat in enumerate(perm_mat_list)]
+
             # print('mask size: ', mask.size())
             iter_num = iter_num + 1
 
@@ -119,21 +122,35 @@ def train_eval_model(model, criterion, optimizer, dataloader, num_epochs, resume
 
             with torch.set_grad_enabled(True):
                 # forward
-                s_pred_list = model(data_list, line_graphs_list, line_n_points_gt_list, perm_mat_list, mask)
+                s_pred_list, node_seq = model(data_list, line_graphs_list, line_n_points_gt_list, mask)
+                # print('s_pred_list: ', s_pred_list)
 
-                loss = sum([criterion(s_pred, perm_mat) for s_pred, perm_mat in zip(s_pred_list, perm_mat_list)])
+                new_perm_list = []
+                for perm, s,t in zip(perm_mat_list, node_seq[0], node_seq[1]):
+                    
+                    new_perm = perm[s][:, t]
+                    # print('new_perm', new_perm)
+                    new_perm_list.append(new_perm)
+
+                loss = sum([criterion(s_pred, perm_mat) for s_pred, perm_mat in zip(s_pred_list, new_perm_list)])
                 loss /= len(s_pred_list)
+
+                print(f'loss: {loss}','-'*30)
 
                 # backward + optimize
                 loss.backward()
                 optimizer.step()
 
-                tp, fp, fn = get_pos_neg_from_lists(s_pred_list, perm_mat_list)
+                
+
+                continue
+                tp, fp, fn = get_pos_neg_from_lists(s_pred_list, new_perm_list)
                 f1 = f1_score(tp, fp, fn)
-                acc, _, __ = matching_accuracy_from_lists(s_pred_list, perm_mat_list)
+                acc, _, __ = matching_accuracy_from_lists(s_pred_list, new_perm_list)
 
                 # statistics
-                bs = perm_mat_list[0].size(0)
+                # bs = perm_mat_list[0].size(0)
+                bs = len(s_pred_list)
                 running_loss += loss.item() * bs  # multiply with batch size
                 epoch_loss += loss.item() * bs
                 running_acc += acc.item() * bs

@@ -1,12 +1,11 @@
-from networkx.algorithms import matching
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
 import torch_geometric
 import torch_geometric.utils as ut
 import utils.backbone
-from BB_GM.affinity_layer import InnerProductWithWeightsAffinity
-from BB_GM.sconv_archs import SiameseSConvOnNodes, SiameseNodeFeaturesToEdgeFeatures
+from utils.sinhorn import Sinkhorn
+from utils.hungarian import hungarian
 from utils.config import cfg
 from utils.feature_align import feature_align
 from utils.utils import lexico_iter
@@ -83,9 +82,10 @@ class Net(utils.backbone.VGG16_bn):
         super(Net, self).__init__()
         self.hidden_dim = 8
         self.mpnn = GCNConv(in_channels=4, out_channels=self.hidden_dim)
-          
+        self.top_rate = 0.3
+        self.clamp = 10
         self.permuter = Permuter(self.hidden_dim)
-
+        self.sinkhorn = Sinkhorn(max_iter=10, epsilon=1e-4)
 
 
     def forward(
@@ -93,7 +93,6 @@ class Net(utils.backbone.VGG16_bn):
         images,
         graphs,
         n_points,
-        perm_mats,
         mask,
         visualize_flag=False,
         visualization_params=None,
@@ -106,12 +105,25 @@ class Net(utils.backbone.VGG16_bn):
         3. 对Ps和Pt进行匹配,反馈gradients
 
         '''
-        global_list = []
-        orig_graph_list = []
+        
         topk_list = []
         mask_list = []
-        for graph, n_point in zip(graphs, n_points):
+        new_n_points = []
+        res_node_seq = []
+        for st, gt in zip(n_points[0], n_points[1]):
+            n_pt = min(st, gt)
+            new_n_points.append((self.top_rate*n_pt).long() if n_pt>self.clamp else n_pt)
+             
+        # print('new_n_points :', new_n_points )
+        
 
+        node_seqs = []
+        for n_point in n_points:
+            node_seqs.append([torch.arange(0,g.item()).float().cuda() for g in n_point])
+                
+
+        for ind, graph in enumerate(graphs):
+            # print(f'index: {ind}', '-'*20)
             node_feat = graph.x
             edge_index = graph.edge_index
             
@@ -125,23 +137,44 @@ class Net(utils.backbone.VGG16_bn):
             mask = ut.to_dense_batch(mask, graph.batch)[0]
 
             perm = self.permuter(node_feat_dense, mask, hard=True, tau=1.0)
-            print('perm size: ', perm.size())
-            print('dense_node_feat size: ', node_feat_dense.size())
+            # print('perm size: ', perm.size())
+            # print('dense_node_feat size: ', node_feat_dense.size())
 
-            #  perm: b*n*n dense_node_feat: b*n*d 
-            new_node_feat = torch.bmm(perm, node_feat_dense)[:,:5,:]
+            # b*n*d = perm: b*n*n dense_node_feat: b*n*d 
+            new_node_feat = torch.bmm(perm, node_feat_dense)
+            for i, node_seq in enumerate(node_seqs[ind]):
+                n_p = node_seq.size(0)
+                node_seqs[ind][i] = torch.mm(node_seq.unsqueeze(0), perm[i][:n_p, :n_p]).squeeze(0).long()
+            
+            # print('node seqs: ', node_seqs[ind])
 
-            topk_list.append(new_node_feat)
 
+            # get top k
+            filtered_graph = []
+            filtered_nodes = []
+            cnt = 0
+            for topk_p, node_f in zip(new_n_points, new_node_feat):
+                
+                filtered_graph.append(node_f[:topk_p,:])
+                filtered_nodes.append(node_seqs[ind][cnt][:topk_p])
+                cnt+=1
+
+            # print('filtered nodes: ', filtered_nodes)
+            # filtered_graph = [node_f[:topk_p,:] for topk_p, node_f in zip(new_n_points, new_node_feat)]
+            topk_list.append(filtered_graph)
+            res_node_seq.append(filtered_nodes)
         
+
+
         # 对topk_list中的source batch 和 target batch进行匹配
         # source batch: b*n*d * mask
         # print(topk_list[0].size(), topk_list[1].size())
-        
-        for sg,tg in zip(topk_list[0], topk_list[1]):
-            print(sg.size(), tg.size())
-            break
+        sim_mats = [torch.mm(sg, tg.t())  for sg,tg in zip(topk_list[0], topk_list[1])]
+        # print('node sequence: ', node_seqs)
+    
+        matchings = [self.sinkhorn(sim_mat) for sim_mat in sim_mats]
+        # print(matchings)
+        # print('res node seq: ', res_node_seq)
 
-        matchings = None
-        
-        return matchings
+
+        return matchings, res_node_seq
